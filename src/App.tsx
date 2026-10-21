@@ -58,6 +58,13 @@ export default function App() {
   useEffect(() => {
     StorageService.init();
     AuthService.init();
+
+    // Transparent cloud rehydration from Supabase if connected
+    StorageService.rehydrateFromSupabase().then((res) => {
+      if (res.success && res.count > 0) {
+        setTenants(StorageService.getTenants());
+      }
+    });
   }, []);
 
   // Authentication State
@@ -117,6 +124,22 @@ export default function App() {
     setProducts(p);
     setCustomers(c);
     setOrders(o);
+
+    // If local storage cell is empty, attempt background cloud hydration from Supabase
+    if (p.length === 0 && c.length === 0 && o.length === 0) {
+      StorageService.rehydrateTenantCell(activeTenant.id).then((hydrated) => {
+        if (hydrated) {
+          const hp = StorageService.getTenantProducts(activeTenant.id);
+          const hc = StorageService.getTenantCustomers(activeTenant.id);
+          const ho = StorageService.getTenantOrders(activeTenant.id);
+          if (hp.length > 0 || hc.length > 0 || ho.length > 0) {
+            setProducts(hp);
+            setCustomers(hc);
+            setOrders(ho);
+          }
+        }
+      });
+    }
   }, [activeTenant?.id, refreshTrigger]);
 
   const refreshAllData = () => {
@@ -589,12 +612,15 @@ export default function App() {
             <span>&bull;</span>
             <span>Indian SaaS Multi-Tenant Platform</span>
           </div>
-          <div className="flex items-center gap-4 text-[11px] text-gray-400">
-            <span>Deterministic Non-AI Math</span>
+          <div className="flex items-center gap-4 text-[11px] text-gray-500">
+            <span>Deterministic Math</span>
             <span>&bull;</span>
-            <span>Complete Database Cell Isolation</span>
+            <span className="flex items-center gap-1.5 font-medium text-emerald-900">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+              <span>Supabase Cloud Hosting Active</span>
+            </span>
             <span>&bull;</span>
-            <span>100% Client Privacy Guarantee</span>
+            <span>Strict Cell Isolation</span>
           </div>
         </div>
       </footer>

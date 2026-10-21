@@ -1,3 +1,5 @@
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Tenant,
   Product,
@@ -8,10 +10,17 @@ import {
   RFMCustomerResult,
   PredictiveSalesForecast,
 } from '../types';
-import { formatINR } from './analyticsMath';
 
 /**
- * Download a formatted text/CSV file to the user's system
+ * Format currency for PDF outputs cleanly without font glyph encoding issues
+ */
+function formatPdfCurrency(amount: number): string {
+  if (isNaN(amount) || amount === null || amount === undefined) return 'INR 0';
+  return `INR ${Math.round(amount).toLocaleString('en-IN')}`;
+}
+
+/**
+ * Download a generic blob file
  */
 export function downloadFile(filename: string, content: string, mimeType = 'text/csv;charset=utf-8;') {
   const blob = new Blob([content], { type: mimeType });
@@ -26,7 +35,454 @@ export function downloadFile(filename: string, content: string, mimeType = 'text
 }
 
 /**
- * Download Admin Data: Platform Merchants, Subscriptions, and MRR Ledger
+ * GENERATE PURE CLIENT-SIDE EXECUTIVE PDF REPORT
+ * (Zero Codex, Zero AI, Pure Deterministic Client-Side Engine via jsPDF)
+ */
+export function generateExecutivePDFReport(
+  tenant: Tenant,
+  products: Product[],
+  customers: Customer[],
+  orders: SalesOrder[],
+  eoqMap: Map<string, EOQResult>,
+  abcList: ABCClassificationResult[],
+  rfmList: RFMCustomerResult[],
+  forecast: PredictiveSalesForecast
+) {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const totalInventoryValuation = products.reduce((sum, p) => sum + p.currentStock * p.unitCost, 0);
+  const totalRevenue = orders.filter((o) => o.status === 'completed').reduce((sum, o) => sum + o.grandTotal, 0);
+  const criticalRestockCount = Array.from(eoqMap.values()).filter(
+    (e) => e.urgencyLevel === 'Critical' || e.urgencyLevel === 'Warning'
+  ).length;
+
+  const primaryEmerald: [number, number, number] = [6, 78, 59]; // #064e3b
+  const accentGreen: [number, number, number] = [5, 150, 105]; // #059669
+  const lightMint: [number, number, number] = [240, 253, 244]; // #f0fdf4
+  const darkText: [number, number, number] = [31, 41, 55]; // #1f2937
+
+  // --- HEADER BANNER ---
+  doc.setFillColor(...primaryEmerald);
+  doc.rect(0, 0, 210, 26, 'F');
+
+  // Title in banner
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('VRIDHI OS  |  EXECUTIVE INTELLIGENCE AUDIT', 14, 11);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(209, 250, 229);
+  doc.text(
+    'Deterministic Non-AI Business & Inventory Analytics • Pure Client-Side Generation',
+    14,
+    18
+  );
+
+  // Tenant Metadata Card
+  doc.setTextColor(...darkText);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(tenant.businessName, 14, 34);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(75, 85, 99);
+  doc.text(`Proprietor: ${tenant.ownerName}  |  Location: ${tenant.city}, ${tenant.state}`, 14, 39);
+  doc.text(
+    `Isolated Cell ID: ${tenant.id}  |  Monthly Plan: ${tenant.subscription.plan.toUpperCase()}  |  Cycle Expiry: ${tenant.subscription.expiresAt.split('T')[0]}`,
+    14,
+    44
+  );
+
+  const dateStr = new Date().toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+  doc.text(`Generated On: ${dateStr}  |  Currency: INR (Rs.)`, 196, 39, { align: 'right' });
+  doc.text(`Report Ref: VRD-${Date.now().toString().slice(-6)}`, 196, 44, { align: 'right' });
+
+  // Divider line
+  doc.setDrawColor(229, 231, 235);
+  doc.line(14, 47, 196, 47);
+
+  // --- KPI CARDS (4 Columns) ---
+  const kpiY = 51;
+  const kpiW = 43;
+  const kpiH = 18;
+
+  const kpis = [
+    { label: 'REALIZED REVENUE', value: formatPdfCurrency(totalRevenue), sub: `${orders.length} orders recorded` },
+    { label: 'WAREHOUSE VALUE', value: formatPdfCurrency(totalInventoryValuation), sub: `${products.length} SKUs total` },
+    {
+      label: 'RESTOCK URGENCY',
+      value: `${criticalRestockCount} SKUs`,
+      sub: criticalRestockCount > 0 ? 'Approaching safety stock' : 'Optimal levels',
+      alert: criticalRestockCount > 0,
+    },
+    {
+      label: '30-DAY FORECAST',
+      value: formatPdfCurrency(forecast.modelMetrics.projectedMonthlyRevenue),
+      sub: `OLS R² = ${forecast.modelMetrics.rSquared}`,
+    },
+  ];
+
+  kpis.forEach((kpi, index) => {
+    const x = 14 + index * (kpiW + 2.5);
+    doc.setFillColor(kpi.alert ? 254 : lightMint[0], kpi.alert ? 242 : lightMint[1], kpi.alert ? 242 : lightMint[2]);
+    doc.setDrawColor(kpi.alert ? 252 : 187, kpi.alert ? 165 : 247, kpi.alert ? 165 : 208);
+    doc.roundedRect(x, kpiY, kpiW, kpiH, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(kpi.alert ? 185 : primaryEmerald[0], kpi.alert ? 28 : primaryEmerald[1], kpi.alert ? 28 : primaryEmerald[2]);
+    doc.text(kpi.label, x + 3, kpiY + 4.5);
+
+    doc.setFontSize(10);
+    doc.setTextColor(kpi.alert ? 185 : darkText[0], kpi.alert ? 28 : darkText[1], kpi.alert ? 28 : darkText[2]);
+    doc.text(kpi.value, x + 3, kpiY + 10.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(107, 114, 128);
+    doc.text(kpi.sub, x + 3, kpiY + 15);
+  });
+
+  let currentY = 74;
+
+  // --- SECTION 1: WILSON EOQ RESTOCK SCHEDULE ---
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('1. Deterministic Inventory Restock Schedule (Wilson EOQ Formulation)', 14, currentY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(75, 85, 99);
+  doc.text('EOQ = sqrt((2 * D * S) / H) • Minimizes annual holding vs order placement friction', 14, currentY + 4);
+
+  const inventoryRows = products.map((p) => {
+    const eoq = eoqMap.get(p.id);
+    return [
+      p.sku,
+      p.name,
+      `${p.currentStock}`,
+      `${eoq?.safetyStock ?? p.minSafetyStock}`,
+      `${eoq?.reorderPoint ?? 0}`,
+      `+${eoq?.eoqUnits ?? 0}`,
+      `${eoq?.daysOfInventoryLeft ?? 0}d`,
+      formatPdfCurrency(p.unitCost),
+      eoq?.urgencyLevel || 'Healthy',
+    ];
+  });
+
+  autoTable(doc, {
+    startY: currentY + 6,
+    head: [['SKU', 'Product Name', 'Stock', 'Safety', 'ROP', 'EOQ Batch', 'Runway', 'Unit Cost', 'Status']],
+    body: inventoryRows.length > 0 ? inventoryRows : [['-', 'No products cataloged in this cell yet.', '-', '-', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: primaryEmerald,
+      textColor: [255, 255, 255],
+      fontSize: 7.5,
+      fontStyle: 'bold',
+      halign: 'left',
+    },
+    alternateRowStyles: {
+      fillColor: lightMint,
+    },
+    styles: {
+      fontSize: 7,
+      cellPadding: 2,
+      textColor: darkText,
+    },
+    columnStyles: {
+      0: { cellWidth: 20, fontStyle: 'bold' },
+      1: { cellWidth: 50 },
+      2: { cellWidth: 15, halign: 'center' },
+      3: { cellWidth: 15, halign: 'center' },
+      4: { cellWidth: 15, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      6: { cellWidth: 15, halign: 'center' },
+      7: { cellWidth: 20, halign: 'right' },
+      8: { cellWidth: 20, halign: 'center' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 9;
+
+  // Check page break
+  if (currentY + 50 > 275) {
+    doc.addPage();
+    currentY = 16;
+  }
+
+  // --- SECTION 2: PARETO ABC MATRIX (80 / 15 / 5) ---
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('2. Pareto ABC Capital Allocation Matrix (80 / 15 / 5 Rule)', 14, currentY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(75, 85, 99);
+  doc.text('Class A (Top 80% Capital), Class B (Next 15%), Class C (Remaining 5% Bulk Velocity)', 14, currentY + 4);
+
+  const abcRows = abcList.map((a) => [
+    `Class ${a.classification}`,
+    a.productName,
+    a.sku,
+    formatPdfCurrency(a.annualMonetaryValue),
+    `${a.percentageOfTotalValue}%`,
+    a.managementPolicy,
+  ]);
+
+  autoTable(doc, {
+    startY: currentY + 6,
+    head: [['Class', 'Product Name', 'SKU', 'Annual Consumption', '% Capital', 'Inventory Management Policy']],
+    body: abcRows.length > 0 ? abcRows : [['-', 'No inventory data for ABC computation', '-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: accentGreen,
+      textColor: [255, 255, 255],
+      fontSize: 7.5,
+      fontStyle: 'bold',
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252],
+    },
+    styles: {
+      fontSize: 7,
+      cellPadding: 2,
+      textColor: darkText,
+    },
+    columnStyles: {
+      0: { cellWidth: 18, fontStyle: 'bold' },
+      1: { cellWidth: 50 },
+      2: { cellWidth: 22 },
+      3: { cellWidth: 28, halign: 'right' },
+      4: { cellWidth: 18, halign: 'center' },
+      5: { cellWidth: 46 },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 9;
+
+  // Check page break
+  if (currentY + 50 > 275) {
+    doc.addPage();
+    currentY = 16;
+  }
+
+  // --- SECTION 3: TOP CUSTOMER RFM & COHORTS ---
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('3. Top Customer Cohorts & Deterministic RFM Matrix', 14, currentY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(75, 85, 99);
+  doc.text('Scored across Recency, Frequency, and Monetary parameters with Churn Decay Risk %', 14, currentY + 4);
+
+  const rfmRows = rfmList.slice(0, 10).map((r) => [
+    r.customerName,
+    r.city,
+    `${r.frequencyCount}`,
+    formatPdfCurrency(r.monetaryTotal),
+    `${r.recencyDays}d`,
+    r.rfmSegment,
+    formatPdfCurrency(r.predictedLTV),
+    `${r.churnRiskPercent}%`,
+  ]);
+
+  autoTable(doc, {
+    startY: currentY + 6,
+    head: [['Customer', 'City', 'Orders', 'Total Spend', 'Recency', 'Cohort Segment', 'Predicted LTV', 'Churn Risk']],
+    body: rfmRows.length > 0 ? rfmRows : [['-', 'No customer records yet', '-', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: primaryEmerald,
+      textColor: [255, 255, 255],
+      fontSize: 7.5,
+      fontStyle: 'bold',
+    },
+    alternateRowStyles: {
+      fillColor: lightMint,
+    },
+    styles: {
+      fontSize: 7,
+      cellPadding: 2,
+      textColor: darkText,
+    },
+    columnStyles: {
+      0: { cellWidth: 40, fontStyle: 'bold' },
+      1: { cellWidth: 25 },
+      2: { cellWidth: 15, halign: 'center' },
+      3: { cellWidth: 25, halign: 'right' },
+      4: { cellWidth: 18, halign: 'center' },
+      5: { cellWidth: 30, fontStyle: 'bold' },
+      6: { cellWidth: 20, halign: 'right' },
+      7: { cellWidth: 15, halign: 'center' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 9;
+
+  // Check page break
+  if (currentY + 50 > 275) {
+    doc.addPage();
+    currentY = 16;
+  }
+
+  // --- SECTION 4: PREDICTIVE SALES FORECAST ---
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(...primaryEmerald);
+  doc.text('4. Predictive Sales Forecast & Mathematical Parameters', 14, currentY);
+
+  const m = forecast.modelMetrics;
+  const forecastParams = [
+    ['OLS Regression R-Squared (R²)', `${m.rSquared}`, 'Holt Smoothing Level (Alpha)', `${m.holtAlpha}`],
+    ['Trend Line Slope (m)', `INR ${m.slope}/day`, 'Holt Trend Smoothing (Beta)', `${m.holtBeta}`],
+    ['Baseline Intercept (c)', `INR ${Math.round(m.intercept)}`, 'Regression Standard Error (SE)', `± ${formatPdfCurrency(m.standardError)}`],
+    ['Projected 30-Day Revenue', formatPdfCurrency(m.projectedMonthlyRevenue), 'Model Statistical Confidence', '95% (2-Sigma Confidence Bands)'],
+  ];
+
+  autoTable(doc, {
+    startY: currentY + 4,
+    body: forecastParams,
+    theme: 'plain',
+    styles: {
+      fontSize: 7.5,
+      cellPadding: 2.2,
+      textColor: darkText,
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 50, textColor: primaryEmerald },
+      1: { cellWidth: 42, fontStyle: 'bold' },
+      2: { fontStyle: 'bold', cellWidth: 50, textColor: primaryEmerald },
+      3: { cellWidth: 40, fontStyle: 'bold' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  // --- FOOTER ACROSS ALL PAGES ---
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+
+    doc.setDrawColor(229, 231, 235);
+    doc.line(14, 286, 196, 286);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(156, 163, 175);
+    doc.text(
+      'Vridhi OS • Generated strictly via deterministic mathematical algorithms (Zero Codex / Zero AI) • 100% Client Privacy',
+      14,
+      290
+    );
+    doc.text(`Page ${i} of ${pageCount}`, 196, 290, { align: 'right' });
+  }
+
+  // Trigger immediate PDF file download
+  const cleanFilename = `${tenant.businessName.replace(/[^a-zA-Z0-9]/g, '_')}_Executive_Audit_Report.pdf`;
+  doc.save(cleanFilename);
+}
+
+/**
+ * GENERATE ADMIN PLATFORM AUDIT PDF
+ * (Zero Codex, Zero AI, Pure Client-Side Generation for Super Admin)
+ */
+export function exportAdminPlatformDataPDF(tenants: Tenant[]) {
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const primaryEmerald: [number, number, number] = [6, 78, 59];
+  const activeTenants = tenants.filter((t) => t.subscription.status === 'active');
+  const totalMRR = activeTenants.reduce((sum, t) => sum + (t.subscription.amountMonthly || 0), 0);
+
+  // Header Banner
+  doc.setFillColor(...primaryEmerald);
+  doc.rect(0, 0, 297, 24, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text('VRIDHI OS  |  PLATFORM TENANT REGISTRY & MRR AUDIT LEDGER', 14, 11);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(209, 250, 229);
+  doc.text(
+    `Super Admin Platform Governance Ledger • Total Registered Cells: ${tenants.length} • Active Paying Cells: ${activeTenants.length} • MRR: INR ${totalMRR.toLocaleString('en-IN')}`,
+    14,
+    18
+  );
+
+  const rows = tenants.map((t) => [
+    t.id,
+    t.businessName,
+    t.ownerName,
+    `${t.city}, ${t.state}`,
+    t.subscription.plan.toUpperCase(),
+    `INR ${t.subscription.amountMonthly.toLocaleString('en-IN')}`,
+    t.subscription.status.toUpperCase(),
+    t.subscription.lastUpiTransactionRef || 'N/A',
+    t.subscription.expiresAt.split('T')[0],
+  ]);
+
+  autoTable(doc, {
+    startY: 28,
+    head: [['Cell ID', 'Business Name', 'Owner Name', 'Location', 'Plan', 'Monthly Fee', 'Status', 'Last UTR / Ref', 'Cycle Expiry']],
+    body: rows.length > 0 ? rows : [['-', 'No tenants registered yet in database', '-', '-', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: primaryEmerald,
+      textColor: [255, 255, 255],
+      fontSize: 8,
+      fontStyle: 'bold',
+    },
+    alternateRowStyles: {
+      fillColor: [240, 253, 244],
+    },
+    styles: {
+      fontSize: 7.5,
+      cellPadding: 2.5,
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(156, 163, 175);
+    doc.text(
+      `Vridhi OS Platform Governance • Generated On: ${new Date().toLocaleDateString('en-IN')} • Page ${i} of ${pageCount}`,
+      14,
+      202
+    );
+  }
+
+  doc.save(`Vridhi_Platform_Admin_Audit_${new Date().toISOString().split('T')[0]}.pdf`);
+}
+
+/**
+ * Download Admin Data: Platform Merchants, Subscriptions, and MRR Ledger (CSV)
  */
 export function exportAdminPlatformDataCSV(tenants: Tenant[]) {
   const headers = [
@@ -47,23 +503,25 @@ export function exportAdminPlatformDataCSV(tenants: Tenant[]) {
     'Created At',
   ];
 
-  const rows = tenants.map((t) => [
-    `"${t.id}"`,
-    `"${t.businessName.replace(/"/g, '""')}"`,
-    `"${t.ownerName.replace(/"/g, '""')}"`,
-    `"${t.email}"`,
-    `"${t.phone}"`,
-    `"${t.city}"`,
-    `"${t.state}"`,
-    `"${t.subscription.plan.toUpperCase()}"`,
-    t.subscription.amountMonthly,
-    `"${t.subscription.status.toUpperCase()}"`,
-    `"${t.subscription.paymentMethod}"`,
-    `"${t.subscription.lastUpiTransactionRef || 'N/A'}"`,
-    `"${t.subscription.startedAt.split('T')[0]}"`,
-    `"${t.subscription.expiresAt.split('T')[0]}"`,
-    `"${t.createdAt.split('T')[0]}"`,
-  ].join(','));
+  const rows = tenants.map((t) =>
+    [
+      `"${t.id}"`,
+      `"${t.businessName.replace(/"/g, '""')}"`,
+      `"${t.ownerName.replace(/"/g, '""')}"`,
+      `"${t.email}"`,
+      `"${t.phone}"`,
+      `"${t.city}"`,
+      `"${t.state}"`,
+      `"${t.subscription.plan.toUpperCase()}"`,
+      t.subscription.amountMonthly,
+      `"${t.subscription.status.toUpperCase()}"`,
+      `"${t.subscription.paymentMethod}"`,
+      `"${t.subscription.lastUpiTransactionRef || 'N/A'}"`,
+      `"${t.subscription.startedAt.split('T')[0]}"`,
+      `"${t.subscription.expiresAt.split('T')[0]}"`,
+      `"${t.createdAt.split('T')[0]}"`,
+    ].join(',')
+  );
 
   const totalMRR = tenants
     .filter((t) => t.subscription.status === 'active')
@@ -71,7 +529,6 @@ export function exportAdminPlatformDataCSV(tenants: Tenant[]) {
 
   const content = [
     `# VRIDHI OS - MASTER SUPER ADMIN PLATFORM AUDIT LEDGER`,
-    `# Master Administrator: s26608934archana@gmail.com`,
     `# Exported On: ${new Date().toLocaleString('en-IN')}`,
     `# Total Registered Tenants: ${tenants.length}`,
     `# Total Active Monthly Recurring Revenue (MRR): INR ${totalMRR}`,
@@ -262,7 +719,7 @@ export function exportSalesLedgerCSV(tenant: Tenant, orders: SalesOrder[]) {
 }
 
 /**
- * Generate a complete, beautifully formatted print/download Executive Intelligence Report (HTML Document)
+ * Also keep HTML printable brief option
  */
 export function generatePrintableExecutiveReport(
   tenant: Tenant,
@@ -274,278 +731,14 @@ export function generatePrintableExecutiveReport(
   rfmList: RFMCustomerResult[],
   forecast: PredictiveSalesForecast
 ) {
-  const totalInventoryValuation = products.reduce((sum, p) => sum + p.currentStock * p.unitCost, 0);
-  const totalRevenue = orders.filter((o) => o.status === 'completed').reduce((sum, o) => sum + o.grandTotal, 0);
-  const criticalRestockCount = Array.from(eoqMap.values()).filter((e) => e.urgencyLevel === 'Critical' || e.urgencyLevel === 'Warning').length;
-
-  const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>${tenant.businessName} - Executive Business & Inventory Audit</title>
-  <style>
-    @page { size: A4; margin: 15mm; }
-    body {
-      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-      color: #064e3b;
-      background: #ffffff;
-      margin: 0;
-      padding: 24px;
-      line-height: 1.5;
-    }
-    .header {
-      border-bottom: 2px solid #059669;
-      padding-bottom: 16px;
-      margin-bottom: 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-    }
-    .brand-title {
-      font-size: 24px;
-      font-weight: 700;
-      color: #064e3b;
-      margin: 0;
-    }
-    .brand-subtitle {
-      font-size: 13px;
-      color: #047857;
-      margin-top: 4px;
-    }
-    .meta-box {
-      text-align: right;
-      font-size: 12px;
-      color: #374151;
-    }
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      margin-bottom: 28px;
-    }
-    .kpi-card {
-      background: #f0fdf4;
-      border: 1px solid #bbf7d0;
-      border-radius: 10px;
-      padding: 14px;
-    }
-    .kpi-label {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #047857;
-      font-weight: 600;
-    }
-    .kpi-value {
-      font-size: 18px;
-      font-weight: 700;
-      color: #064e3b;
-      margin-top: 6px;
-    }
-    h2 {
-      font-size: 16px;
-      font-weight: 700;
-      color: #064e3b;
-      border-left: 4px solid #059669;
-      padding-left: 10px;
-      margin-top: 28px;
-      margin-bottom: 12px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      margin-bottom: 24px;
-    }
-    th {
-      background: #f0fdf4;
-      color: #064e3b;
-      font-weight: 600;
-      text-align: left;
-      padding: 8px 10px;
-      border-bottom: 1px solid #86efac;
-    }
-    td {
-      padding: 8px 10px;
-      border-bottom: 1px solid #e5e7eb;
-      color: #1f2937;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      font-size: 10px;
-      font-weight: 600;
-    }
-    .badge-a { background: #fee2e2; color: #991b1b; }
-    .badge-b { background: #fef3c7; color: #92400e; }
-    .badge-c { background: #e0f2fe; color: #075985; }
-    .badge-crit { background: #fee2e2; color: #b91c1c; }
-    .badge-warn { background: #fef3c7; color: #d97706; }
-    .badge-ok { background: #dcfce7; color: #15803d; }
-    .footer {
-      margin-top: 40px;
-      border-top: 1px solid #e5e7eb;
-      padding-top: 12px;
-      font-size: 11px;
-      color: #6b7280;
-      display: flex;
-      justify-content: space-between;
-    }
-    @media print {
-      body { padding: 0; }
-      .no-print { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <h1 class="brand-title">${tenant.businessName}</h1>
-      <div class="brand-subtitle">Automated Executive Intelligence Report &bull; Powered by Vridhi OS</div>
-      <div style="font-size: 11px; color: #4b5563; margin-top: 4px;">
-        Owner: <strong>${tenant.ownerName}</strong> &bull; Location: ${tenant.city}, ${tenant.state}
-      </div>
-    </div>
-    <div class="meta-box">
-      <div><strong>Report Ref:</strong> VRD-${Date.now().toString().slice(-6)}</div>
-      <div><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</div>
-      <div><strong>Tenancy:</strong> Cell ${tenant.id} (${tenant.subscription.plan.toUpperCase()} Tier)</div>
-    </div>
-  </div>
-
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-label">Total Realized Revenue</div>
-      <div class="kpi-value">${formatINR(totalRevenue)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Warehouse Inventory Value</div>
-      <div class="kpi-value">${formatINR(totalInventoryValuation)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Critical / Warning Restocks</div>
-      <div class="kpi-value" style="color: ${criticalRestockCount > 0 ? '#b91c1c' : '#064e3b'}">${criticalRestockCount} SKUs</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">30-Day Projected Revenue</div>
-      <div class="kpi-value">${formatINR(forecast.modelMetrics.projectedMonthlyRevenue)}</div>
-    </div>
-  </div>
-
-  <h2>1. Deterministic Inventory Restock Schedule & EOQ (Wilson Formula)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>SKU</th>
-        <th>Product Name</th>
-        <th>Stock</th>
-        <th>Safety Stock</th>
-        <th>Reorder Point</th>
-        <th>Optimal EOQ</th>
-        <th>Runway</th>
-        <th>Urgency</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${products.map((p) => {
-        const eoq = eoqMap.get(p.id);
-        const urgencyClass = eoq?.urgencyLevel === 'Critical' ? 'badge-crit' : eoq?.urgencyLevel === 'Warning' ? 'badge-warn' : 'badge-ok';
-        return `
-          <tr>
-            <td><strong>${p.sku}</strong></td>
-            <td>${p.name}</td>
-            <td><strong>${p.currentStock}</strong></td>
-            <td>${eoq?.safetyStock ?? p.minSafetyStock}</td>
-            <td>${eoq?.reorderPoint ?? 0}</td>
-            <td>${eoq?.eoqUnits ?? 0} units</td>
-            <td>${eoq?.daysOfInventoryLeft ?? 0} days</td>
-            <td><span class="badge ${urgencyClass}">${eoq?.urgencyLevel ?? 'Healthy'}</span></td>
-          </tr>
-        `;
-      }).join('')}
-    </tbody>
-  </table>
-
-  <h2>2. Pareto ABC Classification (80 / 15 / 5 Capital Distribution)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Class</th>
-        <th>Product Name</th>
-        <th>SKU</th>
-        <th>Annual Value</th>
-        <th>% of Total</th>
-        <th>Management Policy</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${abcList.map((a) => {
-        const cls = a.classification === 'A' ? 'badge-a' : a.classification === 'B' ? 'badge-b' : 'badge-c';
-        return `
-          <tr>
-            <td><span class="badge ${cls}">Class ${a.classification}</span></td>
-            <td><strong>${a.productName}</strong></td>
-            <td>${a.sku}</td>
-            <td>${formatINR(a.annualMonetaryValue)}</td>
-            <td>${a.percentageOfTotalValue}%</td>
-            <td style="font-size: 11px; color: #4b5563;">${a.managementPolicy}</td>
-          </tr>
-        `;
-      }).join('')}
-    </tbody>
-  </table>
-
-  <h2>3. Top Customer Cohorts & Deterministic RFM Matrix</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Customer</th>
-        <th>City</th>
-        <th>Orders</th>
-        <th>Lifetime Spend</th>
-        <th>Recency</th>
-        <th>Segment</th>
-        <th>Predicted LTV</th>
-        <th>Churn Risk</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rfmList.slice(0, 8).map((r) => `
-        <tr>
-          <td><strong>${r.customerName}</strong></td>
-          <td>${r.city}</td>
-          <td>${r.frequencyCount}</td>
-          <td>${formatINR(r.monetaryTotal)}</td>
-          <td>${r.recencyDays}d ago</td>
-          <td><strong>${r.rfmSegment}</strong></td>
-          <td>${formatINR(r.predictedLTV)}</td>
-          <td style="color: ${r.churnRiskPercent > 60 ? '#b91c1c' : '#047857'}">${r.churnRiskPercent}%</td>
-        </tr>
-      `).join('')}
-    </tbody>
-  </table>
-
-  <h2>4. Predictive Revenue Forecast (Holt-Winters & OLS Linear Regression)</h2>
-  <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; font-size: 12px; margin-bottom: 20px;">
-    <strong>Model Math R²:</strong> ${forecast.modelMetrics.rSquared} &bull; 
-    <strong>Trend Slope (m):</strong> ₹${forecast.modelMetrics.slope}/day &bull; 
-    <strong>Holt Smoothing α:</strong> ${forecast.modelMetrics.holtAlpha} &bull; 
-    <strong>Holt Trend β:</strong> ${forecast.modelMetrics.holtBeta} &bull; 
-    <strong>Standard Error:</strong> ±${formatINR(forecast.modelMetrics.standardError)}
-    <div style="margin-top: 4px; color: #064e3b;">
-      Projected Next 30-Day Revenue: <strong>${formatINR(forecast.modelMetrics.projectedMonthlyRevenue)}</strong> (Confidence Interval: 95%)
-    </div>
-  </div>
-
-  <div class="footer">
-    <div>Generated strictly via deterministic mathematical algorithms. Zero third-party telemetry.</div>
-    <div>Confidential &bull; ${tenant.businessName} &bull; Page 1 of 1</div>
-  </div>
-</body>
-</html>
-  `;
-
-  downloadFile(`${tenant.businessName.replace(/\s+/g, '_')}_Executive_Audit_Report.html`, html, 'text/html;charset=utf-8;');
+  generateExecutivePDFReport(
+    tenant,
+    products,
+    customers,
+    orders,
+    eoqMap,
+    abcList,
+    rfmList,
+    forecast
+  );
 }

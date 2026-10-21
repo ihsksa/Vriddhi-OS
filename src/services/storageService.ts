@@ -7,6 +7,7 @@ import {
   SubscriptionTier,
   TenantStatus,
 } from '../types';
+import { supabaseService } from './supabaseClient';
 
 const STORAGE_KEYS = {
   TENANTS: 'vridhi_tenants_registry_v4',
@@ -77,6 +78,11 @@ export class StorageService {
       tenants.push(tenant);
     }
     localStorage.setItem(STORAGE_KEYS.TENANTS, JSON.stringify(tenants));
+
+    // Transparent background replication to Supabase cloud hosting instance
+    supabaseService.syncTenant(tenant).catch((err) => {
+      console.warn('Supabase tenant sync notice:', err);
+    });
   }
 
   public static deleteTenant(tenantId: string): void {
@@ -86,6 +92,11 @@ export class StorageService {
     localStorage.removeItem(getTenantKey(tenantId, 'products'));
     localStorage.removeItem(getTenantKey(tenantId, 'customers'));
     localStorage.removeItem(getTenantKey(tenantId, 'orders'));
+
+    // Transparent background replication to Supabase cloud hosting instance
+    supabaseService.deleteTenant(tenantId).catch((err) => {
+      console.warn('Supabase tenant delete notice:', err);
+    });
   }
 
   /**
@@ -248,12 +259,22 @@ export class StorageService {
       products.push(product);
     }
     localStorage.setItem(getTenantKey(tenantId, 'products'), JSON.stringify(products));
+
+    // Transparent cloud replication to Supabase
+    supabaseService.syncProduct(tenantId, product).catch((err) => {
+      console.warn('Supabase product sync notice:', err);
+    });
   }
 
   public static deleteProduct(tenantId: string, productId: string): void {
     const products = this.getTenantProducts(tenantId);
     const filtered = products.filter((p) => p.id !== productId);
     localStorage.setItem(getTenantKey(tenantId, 'products'), JSON.stringify(filtered));
+
+    // Transparent cloud replication to Supabase
+    supabaseService.deleteProduct(productId).catch((err) => {
+      console.warn('Supabase product delete notice:', err);
+    });
   }
 
   // --- STRICT TENANT ISOLATION: CUSTOMERS ---
@@ -278,12 +299,22 @@ export class StorageService {
       customers.push(customer);
     }
     localStorage.setItem(getTenantKey(tenantId, 'customers'), JSON.stringify(customers));
+
+    // Transparent cloud replication to Supabase
+    supabaseService.syncCustomer(tenantId, customer).catch((err) => {
+      console.warn('Supabase customer sync notice:', err);
+    });
   }
 
   public static deleteCustomer(tenantId: string, customerId: string): void {
     const customers = this.getTenantCustomers(tenantId);
     const filtered = customers.filter((c) => c.id !== customerId);
     localStorage.setItem(getTenantKey(tenantId, 'customers'), JSON.stringify(filtered));
+
+    // Transparent cloud replication to Supabase
+    supabaseService.deleteCustomer(customerId).catch((err) => {
+      console.warn('Supabase customer delete notice:', err);
+    });
   }
 
   // --- STRICT TENANT ISOLATION: SALES ORDERS ---
@@ -325,5 +356,87 @@ export class StorageService {
       }
     });
     localStorage.setItem(getTenantKey(tenantId, 'products'), JSON.stringify(products));
+
+    // Transparent cloud replication to Supabase
+    supabaseService.syncOrder(tenantId, order).catch((err) => {
+      console.warn('Supabase order sync notice:', err);
+    });
+    supabaseService.syncTenantProducts(tenantId, products).catch((err) => {
+      console.warn('Supabase stock sync notice:', err);
+    });
+  }
+
+  // --- REHYDRATION & PLATFORM-WIDE SUPABASE REPLICATION ---
+
+  /**
+   * Pull remote tenants from Supabase and merge into local registry
+   */
+  public static async rehydrateFromSupabase(): Promise<{ success: boolean; count: number; message: string }> {
+    try {
+      const remoteTenants = await supabaseService.pullTenants();
+      if (!remoteTenants) {
+        return { success: false, count: 0, message: 'Could not connect or fetch tenants from Supabase.' };
+      }
+
+      const localTenants = this.getTenants();
+      const mergedMap = new Map<string, Tenant>();
+      localTenants.forEach((t) => mergedMap.set(t.id, t));
+      remoteTenants.forEach((t) => mergedMap.set(t.id, t));
+
+      const merged = Array.from(mergedMap.values());
+      localStorage.setItem(STORAGE_KEYS.TENANTS, JSON.stringify(merged));
+
+      return {
+        success: true,
+        count: remoteTenants.length,
+        message: `Successfully pulled ${remoteTenants.length} tenants from Supabase.`,
+      };
+    } catch (err: any) {
+      return { success: false, count: 0, message: err.message || 'Failed to pull from Supabase.' };
+    }
+  }
+
+  /**
+   * Pull remote products, customers, and orders for a tenant from Supabase
+   */
+  public static async rehydrateTenantCell(tenantId: string): Promise<boolean> {
+    try {
+      const [remoteProds, remoteCusts, remoteOrds] = await Promise.all([
+        supabaseService.pullTenantProducts(tenantId),
+        supabaseService.pullTenantCustomers(tenantId),
+        supabaseService.pullTenantOrders(tenantId),
+      ]);
+
+      if (remoteProds && remoteProds.length > 0) {
+        localStorage.setItem(getTenantKey(tenantId, 'products'), JSON.stringify(remoteProds));
+      }
+      if (remoteCusts && remoteCusts.length > 0) {
+        localStorage.setItem(getTenantKey(tenantId, 'customers'), JSON.stringify(remoteCusts));
+      }
+      if (remoteOrds && remoteOrds.length > 0) {
+        localStorage.setItem(getTenantKey(tenantId, 'orders'), JSON.stringify(remoteOrds));
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Master One-Click Platform Sync to Supabase
+   */
+  public static async syncAllPlatformToSupabase(): Promise<{
+    success: boolean;
+    message: string;
+    counts: { tenants: number; products: number; customers: number; orders: number };
+  }> {
+    const tenants = this.getTenants();
+    return supabaseService.syncAllPlatformData(
+      tenants,
+      (tid) => this.getTenantProducts(tid),
+      (tid) => this.getTenantCustomers(tid),
+      (tid) => this.getTenantOrders(tid)
+    );
   }
 }

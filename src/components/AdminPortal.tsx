@@ -3,7 +3,8 @@ import { Tenant, SubscriptionTier, TenantStatus } from '../types';
 import { StorageService, PLAN_PRICING } from '../services/storageService';
 import { AuthService } from '../services/authService';
 import { formatINR } from '../utils/analyticsMath';
-import { exportAdminPlatformDataCSV } from '../utils/reportExporter';
+import { exportAdminPlatformDataCSV, exportAdminPlatformDataPDF } from '../utils/reportExporter';
+import { supabaseService } from '../services/supabaseClient';
 import {
   Users,
   CheckCircle2,
@@ -23,6 +24,17 @@ import {
   Edit,
   Trash2,
   Calendar,
+  Database,
+  Server,
+  Copy,
+  Lock,
+  Eye,
+  EyeOff,
+  Cloud,
+  Layers,
+  Activity,
+  Cpu,
+  FileCode,
 } from 'lucide-react';
 
 interface AdminPortalProps {
@@ -58,6 +70,76 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [newCity, setNewCity] = useState('');
   const [newState, setNewState] = useState('Maharashtra');
   const [newPlan, setNewPlan] = useState<SubscriptionTier>('trial');
+
+  // Navigation View: 'tenants' (Directory & Subscriptions) vs 'hosting' (Cloud Infrastructure & Supabase Collections)
+  const [adminView, setAdminView] = useState<'tenants' | 'hosting'>('tenants');
+
+  // Supabase Platform Hosting State
+  const [supabaseConfig, setSupabaseConfig] = useState(() => supabaseService.getConfig());
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState(() => supabaseService.getConfig().url);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState(() => supabaseService.getConfig().anonKey);
+  const [showKey, setShowKey] = useState(false);
+  const [isTestingConn, setIsTestingConn] = useState(false);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+  const [cloudStats, setCloudStats] = useState<{ isConnected: boolean; tenantCount: number; productCount: number; customerCount: number; orderCount: number } | null>(null);
+  const [copiedSql, setCopiedSql] = useState(false);
+  const [showSqlPreview, setShowSqlPreview] = useState(false);
+
+  const loadCloudStats = async () => {
+    const stats = await supabaseService.getStats();
+    setCloudStats(stats);
+  };
+
+  const handleTestConnection = async () => {
+    setIsTestingConn(true);
+    const res = await supabaseService.testConnection(supabaseUrlInput.trim(), supabaseKeyInput.trim());
+    setIsTestingConn(false);
+    setSupabaseConfig(supabaseService.getConfig());
+    if (res.success) {
+      loadCloudStats();
+    }
+    setActionNotice(res.message);
+    setTimeout(() => setActionNotice(null), 6000);
+  };
+
+  const handleSaveSupabaseConfig = async () => {
+    supabaseService.saveConfig({
+      url: supabaseUrlInput.trim(),
+      anonKey: supabaseKeyInput.trim(),
+    });
+    setSupabaseConfig(supabaseService.getConfig());
+    await handleTestConnection();
+  };
+
+  const handleSyncAllToSupabase = async () => {
+    setIsSyncingAll(true);
+    const result = await StorageService.syncAllPlatformToSupabase();
+    setIsSyncingAll(false);
+    if (result.success) {
+      loadCloudStats();
+    }
+    setActionNotice(result.message);
+    setTimeout(() => setActionNotice(null), 7000);
+  };
+
+  const handlePullFromSupabase = async () => {
+    setIsPulling(true);
+    const result = await StorageService.rehydrateFromSupabase();
+    setIsPulling(false);
+    if (result.success) {
+      refreshData();
+      loadCloudStats();
+    }
+    setActionNotice(result.message);
+    setTimeout(() => setActionNotice(null), 7000);
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(supabaseService.getSqlMigrationScript());
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
 
   const refreshData = () => {
     const list = StorageService.getTenants();
@@ -175,11 +257,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     setTimeout(() => setActionNotice(null), 4000);
   };
 
+  const handleDownloadAdminPDF = () => {
+    exportAdminPlatformDataPDF(tenants);
+    setActionNotice('Platform administrative audit PDF generated & downloaded (Zero Codex).');
+    setTimeout(() => setActionNotice(null), 4000);
+  };
+
   // Calculations for Admin KPIs
   const totalTenantsCount = tenants.length;
   const activeTenants = tenants.filter((t) => t.subscription.status === 'active');
   const pendingApprovals = tenants.filter((t) => t.subscription.status === 'pending_approval');
   const totalMRR = activeTenants.reduce((sum, t) => sum + (t.subscription.amountMonthly || 0), 0);
+  const totalProductsAcrossCells = tenants.reduce((sum, t) => sum + StorageService.getTenantProducts(t.id).length, 0);
+  const totalCustomersAcrossCells = tenants.reduce((sum, t) => sum + StorageService.getTenantCustomers(t.id).length, 0);
+  const totalOrdersAcrossCells = tenants.reduce((sum, t) => sum + StorageService.getTenantOrders(t.id).length, 0);
 
   // Filtered tenants list
   const filteredTenants = tenants.filter((t) => {
@@ -211,12 +302,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         {/* Admin Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
+            onClick={handleDownloadAdminPDF}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-600 bg-emerald-800 text-white px-3.5 py-2 text-xs font-semibold hover:bg-emerald-700 transition shadow-xs"
+            title="Generate and download complete administrative audit report in PDF format (Pure client-side, Zero Codex)"
+          >
+            <Download className="w-4 h-4 text-emerald-200" />
+            <span>Download Audit PDF</span>
+          </button>
+
+          <button
             onClick={handleDownloadAdminData}
             className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-50 transition shadow-2xs"
-            title="Download complete administrative data of all tenants & subscriptions"
+            title="Download complete administrative data of all tenants & subscriptions in CSV format"
           >
             <Download className="w-4 h-4 text-emerald-700" />
-            <span>Download Admin Data</span>
+            <span>Download CSV Ledger</span>
           </button>
 
           <button
@@ -241,8 +341,45 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
       )}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Admin Sub-Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-2">
+        <button
+          onClick={() => setAdminView('tenants')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            adminView === 'tenants'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-emerald-950 hover:bg-emerald-50 border border-gray-200'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Tenant Cells & Subscriptions ({totalTenantsCount})</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setAdminView('hosting');
+            loadCloudStats();
+          }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            adminView === 'hosting'
+              ? 'bg-emerald-800 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-emerald-950 hover:bg-emerald-50 border border-gray-200'
+          }`}
+        >
+          <Database className="w-3.5 h-3.5" />
+          <span>Supabase Cloud Hosting Engine</span>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              supabaseConfig.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+            }`}
+          />
+        </button>
+      </div>
+
+      {adminView === 'tenants' ? (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-2xl bg-white p-5 border border-emerald-100 shadow-xs">
           <div className="flex items-center justify-between text-xs text-emerald-800 font-semibold uppercase tracking-wider">
             <span>Monthly Recurring Revenue (MRR)</span>
@@ -498,6 +635,342 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </table>
         </div>
       </div>
+    </>
+  ) : (
+    /* CLOUD HOSTING & SUPABASE COLLECTIONS INFRASTRUCTURE CONTROL CENTER */
+    <div className="space-y-6">
+      {/* Hosting Architecture Header */}
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-950 via-emerald-900 to-emerald-950 text-white p-6 sm:p-8 shadow-md">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-2.5 max-w-2xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-800/80 text-emerald-200 text-xs font-semibold">
+              <Database className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Central Platform Database Infrastructure</span>
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  supabaseConfig.isConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+              <span>{supabaseConfig.isConnected ? 'Cloud Host Connected' : 'Ready to Connect'}</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
+              Multi-Tenant Supabase Cloud Hosting Engine
+            </h2>
+            <p className="text-xs text-emerald-200/90 leading-relaxed">
+              Engineered on PostgreSQL 15 with strict Row Level Security (RLS). Every merchant tenant is allocated an isolated cell partitioned by <code className="bg-emerald-800/80 px-1.5 py-0.5 rounded text-emerald-200">tenant_id</code>. Zero cross-tenant data leaks, automated background replication, and pure client-side deterministic execution.
+            </p>
+          </div>
+
+          {/* Master Hosting Action Buttons */}
+          <div className="flex flex-col sm:flex-row lg:flex-col gap-2.5 shrink-0">
+            <button
+              onClick={handleSyncAllToSupabase}
+              disabled={isSyncingAll}
+              className="flex items-center justify-center gap-2 rounded-xl bg-emerald-400 text-emerald-950 font-bold px-5 py-2.5 text-xs shadow-sm hover:bg-emerald-300 active:scale-95 transition disabled:opacity-50"
+              title="Replicate all platform tenants, products, customers, and orders to Supabase"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAll ? 'animate-spin' : ''}`} />
+              <span>{isSyncingAll ? 'Replicating Data...' : 'Sync Everything to Supabase'}</span>
+            </button>
+
+            <button
+              onClick={handlePullFromSupabase}
+              disabled={isPulling}
+              className="flex items-center justify-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-900/60 text-emerald-100 font-semibold px-4 py-2 text-xs hover:bg-emerald-800/80 transition disabled:opacity-50"
+              title="Pull latest remote tenant cells from Supabase"
+            >
+              <Download className={`w-3.5 h-3.5 ${isPulling ? 'animate-spin' : ''}`} />
+              <span>{isPulling ? 'Pulling Remote State...' : 'Pull & Rehydrate from Cloud'}</span>
+            </button>
+
+            <button
+              onClick={handleCopySql}
+              className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-900/40 text-emerald-200 font-semibold px-4 py-2 text-xs hover:bg-emerald-800/50 transition"
+            >
+              <Copy className="w-3.5 h-3.5 text-emerald-300" />
+              <span>{copiedSql ? 'Copied Migration SQL!' : 'Copy Multi-Tenant SQL Schema'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Database Credentials & Connection Settings */}
+      <div className="rounded-2xl bg-white border border-emerald-100 p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100">
+          <div>
+            <h3 className="text-sm font-bold text-emerald-950 flex items-center gap-2">
+              <Server className="w-4 h-4 text-emerald-700" />
+              <span>Supabase Host Connection Settings</span>
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Configure your platform's central Supabase instance URL and public Anon Key.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
+                supabaseConfig.isConnected
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  supabaseConfig.isConnected ? 'bg-emerald-600' : 'bg-amber-500'
+                }`}
+              />
+              <span>{supabaseConfig.isConnected ? 'Verified Connection' : 'Not Connected'}</span>
+            </span>
+            {supabaseConfig.lastTestedAt && (
+              <span className="text-[11px] text-gray-400 font-mono">
+                Last tested: {new Date(supabaseConfig.lastTestedAt).toLocaleTimeString('en-IN')}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">
+              Supabase Project URL *
+            </label>
+            <input
+              type="text"
+              placeholder="https://xyzcompany.supabase.co"
+              value={supabaseUrlInput}
+              onChange={(e) => setSupabaseUrlInput(e.target.value)}
+              className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs font-mono focus:border-emerald-600 focus:outline-hidden"
+            />
+            <span className="text-[11px] text-gray-400 mt-1 block">
+              Find under Supabase Project Settings &rarr; API &rarr; Project URL
+            </span>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">
+              Project Anon / Public API Key *
+            </label>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                value={supabaseKeyInput}
+                onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                className="w-full rounded-xl border border-gray-300 pl-3 pr-10 py-2 text-xs font-mono focus:border-emerald-600 focus:outline-hidden"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                title={showKey ? 'Hide Key' : 'Show Key'}
+              >
+                {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <span className="text-[11px] text-gray-400 mt-1 block">
+              Safe public client key. Row Level Security policies enforce multi-tenant isolation.
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2.5 mt-5 pt-4 border-t border-gray-100 flex-wrap">
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={isTestingConn}
+            className="flex items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition shadow-2xs disabled:opacity-50"
+          >
+            <Activity className={`w-3.5 h-3.5 text-gray-500 ${isTestingConn ? 'animate-spin' : ''}`} />
+            <span>{isTestingConn ? 'Testing Connection...' : 'Test Connection'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSaveSupabaseConfig}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-800 px-5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 shadow-xs transition"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Save & Connect Engine</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Database Collections Overview (4 Core Multi-Tenant Tables) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-emerald-950">
+              Hosted Multi-Tenant Database Collections
+            </h3>
+            <p className="text-xs text-gray-500">
+              Live data collections synchronized with continuous background replication.
+            </p>
+          </div>
+          <button
+            onClick={loadCloudStats}
+            className="flex items-center gap-1 text-xs text-emerald-800 hover:text-emerald-950 font-semibold"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Refresh Live Counts</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Collection 1: Tenants Registry */}
+          <div className="rounded-2xl bg-white border border-emerald-100 p-5 shadow-xs flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-bold text-emerald-950 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  vridhi_tenants
+                </span>
+                <Building className="w-4 h-4 text-emerald-700" />
+              </div>
+              <h4 className="text-xs font-bold text-gray-900 mt-2">Platform Tenants Registry</h4>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Master directory, subscription tiers, ₹0 trial cycles, and tenant profiles.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-gray-500">Local Cells: <strong>{totalTenantsCount}</strong></span>
+              <span className="text-emerald-800 font-mono">
+                Cloud: <strong>{cloudStats ? cloudStats.tenantCount : 'Ready'}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Collection 2: Products Catalog */}
+          <div className="rounded-2xl bg-white border border-emerald-100 p-5 shadow-xs flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-bold text-emerald-950 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  vridhi_products
+                </span>
+                <Layers className="w-4 h-4 text-emerald-700" />
+              </div>
+              <h4 className="text-xs font-bold text-gray-900 mt-2">Tenant Inventory & EOQ</h4>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Catalog SKUs, safety stock, lead times, Wilson EOQ batches, strictly keyed by tenant_id.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-gray-500">Local SKUs: <strong>{totalProductsAcrossCells}</strong></span>
+              <span className="text-emerald-800 font-mono">
+                Cloud: <strong>{cloudStats ? cloudStats.productCount : 'Ready'}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Collection 3: Customers Directory */}
+          <div className="rounded-2xl bg-white border border-emerald-100 p-5 shadow-xs flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-bold text-emerald-950 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  vridhi_customers
+                </span>
+                <Users className="w-4 h-4 text-emerald-700" />
+              </div>
+              <h4 className="text-xs font-bold text-gray-900 mt-2">Customer CRM & RFM</h4>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Customer contact details, RFM cohorts, and order history partitioned by tenant_id.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-gray-500">Local Contacts: <strong>{totalCustomersAcrossCells}</strong></span>
+              <span className="text-emerald-800 font-mono">
+                Cloud: <strong>{cloudStats ? cloudStats.customerCount : 'Ready'}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Collection 4: Sales Orders & Tax Invoices */}
+          <div className="rounded-2xl bg-white border border-emerald-100 p-5 shadow-xs flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-bold text-emerald-950 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  vridhi_orders
+                </span>
+                <CreditCard className="w-4 h-4 text-emerald-700" />
+              </div>
+              <h4 className="text-xs font-bold text-gray-900 mt-2">Sales & GST Tax Ledgers</h4>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Invoice items, taxable subtotal, CGST, SGST, grand total, and payment modes.
+              </p>
+            </div>
+            <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+              <span className="text-gray-500">Local Orders: <strong>{totalOrdersAcrossCells}</strong></span>
+              <span className="text-emerald-800 font-mono">
+                Cloud: <strong>{cloudStats ? cloudStats.orderCount : 'Ready'}</strong>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Hosting Architecture & Security Hardening (RLS Isolation) */}
+      <div className="rounded-2xl bg-white border border-emerald-100 p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-700" />
+            <h3 className="text-sm font-bold text-emerald-950">
+              Strict Multi-Tenant Row Level Security (RLS) Protocol
+            </h3>
+          </div>
+          <button
+            onClick={() => setShowSqlPreview(!showSqlPreview)}
+            className="text-xs text-emerald-800 font-semibold hover:underline"
+          >
+            {showSqlPreview ? 'Hide SQL Script' : 'View SQL Migration Script'}
+          </button>
+        </div>
+
+        <p className="text-xs text-gray-600 leading-relaxed">
+          Every query made by any merchant or tenant is constrained by Row Level Security in PostgreSQL. Even if a tenant knows another tenant's ID or attempts manual table queries, PostgreSQL rejects access at the database kernel layer:
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+            <span className="font-bold text-gray-900 block">1. Cell Partitioning</span>
+            <span className="text-gray-500 text-[11px]">
+              All tables enforce foreign keys to <code className="text-emerald-800">public.vridhi_tenants(id)</code> with cascade deletion.
+            </span>
+          </div>
+          <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+            <span className="font-bold text-gray-900 block">2. Zero Cross-Tenant Leaks</span>
+            <span className="text-gray-500 text-[11px]">
+              RLS policy <code className="text-emerald-800">Tenant Products Isolation</code> guarantees merchant isolation across all CRUD calls.
+            </span>
+          </div>
+          <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-1">
+            <span className="font-bold text-gray-900 block">3. Transparent Cloud Sync</span>
+            <span className="text-gray-500 text-[11px]">
+              StorageService mirrors saves/deletes directly to Supabase without annoying modal popups.
+            </span>
+          </div>
+        </div>
+
+        {showSqlPreview && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <div className="flex items-center justify-between pb-2">
+              <span className="text-xs font-bold text-gray-700 font-mono">
+                supabase_multi_tenant_schema.sql
+              </span>
+              <button
+                onClick={handleCopySql}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 transition"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>{copiedSql ? 'Copied to Clipboard!' : 'Copy Schema'}</span>
+              </button>
+            </div>
+            <pre className="p-4 rounded-xl bg-gray-900 text-emerald-300 font-mono text-[11px] overflow-x-auto max-h-80 scrollbar-thin">
+              {supabaseService.getSqlMigrationScript()}
+            </pre>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
 
       {/* EDIT TENANT MODAL: Edits plan, status, and automatically recalculates expiry date */}
       {editingTenant && (

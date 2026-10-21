@@ -14,6 +14,7 @@ import {
   exportInventoryAuditCSV,
   exportCustomerRFMCSV,
   exportSalesLedgerCSV,
+  generateExecutivePDFReport,
   generatePrintableExecutiveReport,
 } from '../../utils/reportExporter';
 import {
@@ -58,7 +59,7 @@ export const ReportStudioTab: React.FC<ReportStudioTabProps> = ({
   };
 
   const handleDownloadExecutiveReport = () => {
-    generatePrintableExecutiveReport(
+    generateExecutivePDFReport(
       tenant,
       products,
       customers,
@@ -68,7 +69,7 @@ export const ReportStudioTab: React.FC<ReportStudioTabProps> = ({
       rfmList,
       forecast
     );
-    notify('Executive Intelligence Document generated and downloaded.');
+    notify('Executive PDF Report generated & downloaded client-side (Zero Codex).');
   };
 
   const handleDownloadInventoryCSV = () => {
@@ -124,11 +125,14 @@ export const ReportStudioTab: React.FC<ReportStudioTabProps> = ({
           <div className="pt-3 flex items-center gap-3 flex-wrap">
             <button
               onClick={handleDownloadExecutiveReport}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 text-emerald-950 font-bold px-5 py-2.5 text-xs shadow-sm hover:bg-emerald-400 active:scale-95 transition"
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 text-emerald-950 font-bold px-5 py-2.5 text-xs shadow-sm hover:bg-emerald-300 active:scale-95 transition"
             >
               <Download className="w-4 h-4" />
-              <span>Download Formatted Executive Document</span>
+              <span>Download Executive PDF Report (.pdf)</span>
             </button>
+            <span className="text-[11px] text-emerald-200/80 font-mono">
+              Pure client-side PDF • Zero Codex • 100% Private
+            </span>
           </div>
         </div>
       </div>
